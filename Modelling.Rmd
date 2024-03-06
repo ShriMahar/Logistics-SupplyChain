@@ -1,0 +1,256 @@
+---
+title: "Demand Forecasting of Lettuce"
+author: 'null'
+date: 'null'
+output:
+  html_document:
+    df_print: paged
+---
+ 
+```{r echo=TRUE, warning=FALSE}
+library(forecast)
+library(tseries)
+library(ggplot2)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+</br>
+
+#### <span style="color:#5a5d62">**Reading the data**</span>
+
+```{r }
+# numerical vector containing 103 daily observations of lettuce demand
+restaurant_46673 <- read.csv("lettuce_series.csv")
+head(restaurant_46673, 7)
+```
+</br>
+
+#### <span style="color:#5a5d62">**Create the time series object**</span>
+Since we only have 3 months of daily data on lettuce demand with a weekly cycle (and not an annual cycle) we shall use frequency = 7.
+
+```{r }
+#Convert the lettuceDemand column of the dataframe which is a numerical vector into a univariate time series object
+restaurant_46673_ts <- ts(restaurant_46673[, 3], frequency = 7, start = c(03,05))
+```
+</br>
+
+#### <span style="color:#5a5d62">**Training and test data split** </span>  
+```{r }
+# training set (80%)
+restaurant_46673_ts_train <- ts(restaurant_46673[1:83,3], frequency = 7)
+# test set (20% - last 20 days)
+restaurant_46673_ts_test <- restaurant_46673[84:nrow(restaurant_46673),3]
+```
+</br></br>
+
+### <span style="color:#378af6">**ARIMA (seasonal) Model**</span>
+</br>
+
+##### <span style="color:#378af6">**STEP 1 - IDENTIFICATION**</span>
+
+In the identification step we will find out if the time series is stationary in terms of trends, variance and seasonality both visually and through some tests.
+```{r}
+# visual inspection of the time series
+autoplot(restaurant_46673_ts)
+```
+
+```{r }
+# testing if the time series is stationary - ADF test
+adf.test(restaurant_46673_ts_train)
+# testing if the time series is stationary - KPSS test
+kpss.test(restaurant_46673_ts_train)
+# testing if the time series is stationary - PP test
+pp.test(restaurant_46673_ts_train)
+```
+</br>
+<div style="text-align: justify">
+For the ADF and PP tests the null hypothesis states that the time series is NOT stationary. Both test reported p-values equal to 0.01.Upon comparing the p-value against 5% significance level that 0.05 (95% confidence level), the p-value is smaller than the significance level and the null hypothesis can be rejected. As a result, we can say that the time series is stationary.
+
+Alternatively in the KPSS test whose null hypothesis is that, the time series is stationary, the p-value which is 0.1 is greater than 0.05, meaning that deviation from the null hypothesis is not statistically significant, and the null hypothesis is not rejected.
+
+All the 3 tests are tailored for detecting non-stationarity in the form of a unit root in the process and their result suggests that the time series is stationary in other words, there are no trends which can also be observed visually from the output of the decompose() function and the variance is pretty same. However, they are not tailored for detecting non-stationarity of the seasonal kind.</div>  
+</br>
+```{r }
+# visualise the trend and seasonality of the time series by decomposing it
+decompose = decompose(restaurant_46673_ts)
+autoplot(decompose)
+```
+</br>
+<div style="text-align: justify">From the above plot we can observe that there is definitely seasonality in the given data, which is indicative of the relatively smaller grey bar in the seasonal panel. The seasonality has to be removed via differencing in order for us to use the ARIMA model effectively.Alternatively besides the visual examination, we can also detect seasonality through the function nsdiffs() like below.
+
+The grey bar of the trend panel is very large, even larger than the grey bar of random remainder, which indicates that its contribution to the variation in the original time series is only marginal.</div>  
+</br>
+
+##### <span style="color:#5a5d62">**Trend Part**</span> 
+The ndiffs() result suggests that the we do not require any differencing the output being 0.
+```{r}
+#number of differencing needed to make time-series stationary (non seasonal part)
+ndiffs(restaurant_46673_ts_train)  
+```
+</br>
+
+##### <span style="color:#5a5d62">**Seasonal Part**</span> 
+The test result of nsdiffs() suggests that there are seasonal factors in the time-series and we will have to take first-order seasonal difference once (output being 1) to obtain a stationary time-series.
+```{r}
+#number of seasonal differencing needed to make time-series stationary
+nsdiffs(restaurant_46673_ts_train) 
+```
+
+
+
+```{r }
+#visualise the training data before removing seasonality
+autoplot(restaurant_46673_ts_train)
+#seasonal differencing of the time-series
+restaurant_46673.diff1 <- diff(restaurant_46673_ts_train, lag = 7, differences = 1)
+autoplot(restaurant_46673.diff1)
+```
+
+##### <span style="color:#5a5d62">**Plotting ACF and PACF**</span>
+```{r }
+#acf plot of seasonally differenced ts
+ggAcf(restaurant_46673.diff1)
+
+#pacf plot of seasonally differenced ts
+ggPacf(restaurant_46673.diff1)
+```
+</br>
+
+##### <span style="color:#5a5d62">**Inference of parameters for the ARIMA model from the ACF and PACF plots** </span>
+
+<div style="text-align: justify">From the ACF and PACF plots of the stationarised time series we can infer that our order 'P' <= 2 as there are 2 spikes in the PACF plot and the order 'Q' <= 2 (2 spikes in the ACF plot) might be needed to find the best fitted SARIMA model. Additionally, we already know that a seasonal differencing 'D' of order 1 is needed.    
+**NOTE:** Since the time series was trend stationary to begin with, the values for p, q and d can be set to 0.</div>  
+</br>
+
+##### <span style="color:#5a5d62">**Checking if time series is stationary in terms of seasonality after seasonal differencing**</span>
+
+Upon checking the nsdiffs() of the seasonally differenced data, we see that the result is now 0 which confirms that data is stationary (in terms of seasonality) and we know that the data is level stationary free of trends from our earlier analysis using adf.test().
+```{r}
+#seasonal stationarity, how many seasonal differencing is needed ?
+nsdiffs(restaurant_46673.diff1) 
+```
+By performing the nsdiffs() again, we can confirm that the time series is now stationary and is ready to apply the ARIMA model.  
+</br>
+
+##### <span style="color:#378af6">**Step 2 - ESTIMATION**</span>
+
+<div style="text-align: justify">Since we already know that seasonal differencing is to be applied to the data to remove seasonality, we will specify D = 1 in the auto.arima() function to constraint our search space for the best model by evaluating only models that use first order seasonal differencing. The rest of the parameters like p, q, d, P and Q are all optimised within the autom.arima() function automatically.</div>
+
+```{r }
+# application of the auto ARIMA model
+autoarima = auto.arima(restaurant_46673_ts_train, D=1, trace = TRUE, ic = 'bic')
+summary(autoarima)
+```
+<div style="text-align: justify">The above result suggests that the best model includes a seasonal MA(1) component, seasonal differencing of 1 with no AR component and with periodicity of 7 which is common when have daily data, as there is typically a weekly pattern in the time series. 
+
+Although the best model suggested by auto.arima() is ARIMA(0,0,0)(0,1,1)[7], we will try a couple of more custom ARIMA models based on our intuition from the ACF and PACF plots that we analysed in the identification step, so we have the chance to compare and choose the best model for forecasting.  
+
+Since value of P can be <= 2, we shall try the following 2 models (fitted_arima2, fitted_arima3) with P = 2, one with D = 0 and an other with D = 1 respectively. 
+</div>  
+
+```{r }
+# custom estimation of ARIMA models
+fitted_arima1 <- Arima(restaurant_46673_ts_train, order = c(0, 0, 0),seasonal = list(order = c(0, 1, 1), period = 7), include.drift = FALSE) # model1 -> given by auto.arima()
+
+# Since value of P can be <= 2, we shall try the following 2 models 
+fitted_arima2 <- Arima(restaurant_46673_ts_train, order = c(1, 0, 0),seasonal = list(order = c(2, 1, 1), period = 7), include.drift = FALSE) # model2 
+
+fitted_arima3 <- Arima(restaurant_46673_ts_train, order = c(0, 0, 0),seasonal = list(order = c(2, 1, 1), period = 7), include.drift = FALSE) # model3 
+```
+</br>
+
+##### <span style="color:#378af6">**Step 3 - VERIFICATION**</span>
+
+<div style="text-align: justify">In this step, the residuals will tell us if the model was able to capture all of the information provided by the data.
+
+To this end, We will analyse the graphs of the residuals, histograms and the ACF plots for all the 3 models that were tried in the previous steps. </div>  
+
+```{r }
+#verification step 
+checkresiduals(fitted_arima1)
+checkresiduals(fitted_arima2)
+checkresiduals(fitted_arima3)
+```
+<div style="text-align: justify">Upon visual examination, we find that the residual graphs of all the 3 models seem to have a mean 0 and a constant variance more or less, which is indicative of white noise.
+
+With regards to the **ACF plots** of the residuals of each of the 3 models, we can observe that almost all the spikes are within the 95% confidence band, in other words the lack of serial auto correlation among the lags of the residuals suggest that the forecasts are good.
+
+The **histogram** of the residuals of fitted_arima2 model looks more "normally distributed" compared to the other 2 models namely fitted_arima1 and fitted_arima3 suggesting that the fitted_arima2 model produces forecasts that appears to have taken in to account all available information but this has to be confirmed by measuring the accuracy of the models.
+
+Additionally, the **Ljung-Box test** that was also performed to show that the residuals have no remaining autocorrelations.
+
+The Ljung-Box test uses the following hypotheses:  
+
+**H0:** The residuals are independently distributed.    
+**H1:** The residuals are not independently distributed meaning they exhibit serial correlation
+
+Since the p-values of the residuals of the 3 evaluated models are greater than 0.05 (5% significance level), we fail to reject the null hypothesis, confirming that the residuals are indeed random (white nosie).</div>  
+</br></br>
+
+### <span style="color:#378af6">**Holt-Winters Model**</span>
+
+<div style="text-align: justify">To apply the Holt-Winters method we shall use the ets() from the forecast package.The model parameters (errorterm, trend, seasonality) are represented by "ZZZ". The error term usually being additive, we shall represent it by the letter  A.
+
+From the decomposition of the time series data, we know that there is no trend component hence the letter N is used to represent none.
+
+Finally, for the seasonal component we shall use the letter A(additive) since the seasonal variations were constant over time. Hence the model we choose is "ANA" which can be compared against the model=  "ZZZ" for any discripancies which automatically determines the type of each of the elements of the model namely errorterm, trend and seasonality. 
+
+</div>  
+
+```{r echo=TRUE}
+autoplot(restaurant_46673_ts_train)
+ets1 <- ets(restaurant_46673_ts_train, model = "ANA")
+ets2 <- ets(restaurant_46673_ts_train, model = "ZZZ")
+```
+```{r echo=TRUE}
+# optimal types of each element suggested by model = "ZZZ".
+ets2
+```
+
+In this case the best model proposed by using "ZZZ" is consistent with our choice of model.
+
+```{r }
+#white noise verification of the residuals of ets1
+checkresiduals(ets1)
+```
+Since the p-values of the residuals is 0.02 which is less than 0.05 (5% significance level), we reject the null hypothesis, confirming that the residuals are NOT independently distributed meaning they exhibit serial correlation and are not completely white noise.
+</br></br>
+
+### <span style="color:#378af6">**Model comparison using the test set**</span>
+In this section, we shall compare the accuracy of each of the 4 models that we evaluated so far.  
+</br>
+**3 ARIMA models - fitted_arima1, fitted_arima2, fitted_arima3**  
+**1 Holt-Winters ets model - ets1**  
+
+To choose the best model among the 4, we will use the root mean square measure as one of the criteria, the favorable model being the one with the least RMSE value after comparing the forecast of test data and the observed data (the last 20 days of data of the time series corresponds to the test data)  using the accuracy() function.
+
+```{r }
+accuracy(forecast(fitted_arima1, h = 20), restaurant_46673_ts_test) 
+accuracy(forecast(fitted_arima2, h = 20), restaurant_46673_ts_test) 
+accuracy(forecast(fitted_arima3, h = 20), restaurant_46673_ts_test) 
+accuracy(forecast(ets1, h = 20), restaurant_46673_ts_test) 
+```
+From the test results we can observe that the "ets1" (Holt-Winters model) has the lowest RMSE value of 36.67 for its **test data**. On the other hand it's residuals were not white noise hence we cannot consider the Holt-Winters model as the best model for forecasting.
+
+We could in fact choose one of the 3 ARIMA models for forecasting, since all the 3 ARIMA models's residuals were white noise owing to their p-values > than 0.05 from Ljung-Box test (there by failing to reject the null hypothesis).
+
+We choose "fitted_arima2" as the best model owing to it's residuals resembling white noise in addition to it's histogram looking more or less "normally distributed".
+</br></br>
+
+### <span style="color:#378af6">**Forecasting **</span>
+
+We shall thus deem the "fitted_arima2" as the best model for forecasting and run the model on the entire data set one more time to improve its accuracy before forecasting the demand for the next 2 weeks.
+
+```{r }
+# train the model on the entire dataset (training + test)
+best_model <- Arima(restaurant_46673_ts, order = c(1, 0, 0),seasonal = list(order = c(2, 1, 1), period = 7), include.drift = FALSE)
+
+# forecasting using the best fitted model for the next 2 weeks (14 days)
+forecast_lettuce <- forecast(best_model, h = 14, level=c(95))
+
+#demand of lettuce from 06/16/2015 to 06/29/2015 given by the PointForecast column
+forecast_lettuce
+```
+</br></br>
