@@ -12,3 +12,10 @@ data from 2 stores in Berkeley, CA and 2 stores in New York, NY.
 
 Using this information we shall forecast the daily demand for the next two weeks (from 06/16/2015 to 06/29/2015) of one restaurant with Store ID:46673 to
 help the managers make inventory replenishment decisions of one specific ingredient: lettuce using both **Holt-Winters and ARIMA methods** in generating the forecast. 
+
+
+### Result
+
+We shall deem the “fitted_arima2” (see report for value of params)as the best model for forecasting. 
+
+
